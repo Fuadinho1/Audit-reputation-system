@@ -47,3 +47,39 @@
 
 (define-read-only (is-auditor (address principal))
   (default-to false (map-get? auditors address)))
+;; Token Transfer and Burn Functions
+(define-public (transfer (amount uint) (sender principal) (recipient principal) (memo (optional (buff 34))))
+  (begin
+    (asserts! (is-eq tx-sender sender) err-not-authorized)
+    (asserts! (> amount u0) err-zero-amount)
+    (asserts! (<= amount (ft-get-balance reputation-token sender)) err-insufficient-balance)
+    (asserts! (not (is-eq sender recipient)) err-self-transfer)
+    (match (ft-transfer? reputation-token amount sender recipient)
+      success (begin
+        (map-set reputation-timestamps recipient block-height)
+        (ok true))
+      error (err u3))))
+
+(define-public (burn (amount uint) (owner principal))
+  (begin
+    (asserts! (is-eq tx-sender owner) err-not-authorized)
+    (asserts! (> amount u0) err-zero-amount)
+    (asserts! (<= amount (ft-get-balance reputation-token owner)) err-insufficient-balance)
+    (ft-burn? reputation-token amount owner)))
+
+;; Decay and Balance Functions
+(define-public (decay-reputation)
+  (let
+    (
+      (current-block block-height)
+      (last-decay (var-get last-decay-block))
+    )
+    (if (>= (- current-block last-decay) decay-period)
+      (begin
+        (var-set last-decay-block current-block)
+        (ok true))
+(err u109))))
+
+(define-read-only (get-decayed-balance (user principal))
+  (let ((last-update (default-to u0 (map-get? reputation-timestamps user))))
+    (ok (apply-decay (ft-get-balance reputation-token user) last-update))))
