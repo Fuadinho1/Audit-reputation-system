@@ -23,3 +23,27 @@
 (define-map whitelist principal bool)
 (define-map roles principal (string-ascii 10))
 (define-map reputation-timestamps principal uint)
+
+;; Auditor Management Functions
+(define-public (verify-auditor (new-auditor principal))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-not-authorized)
+    (asserts! (is-none (map-get? auditors new-auditor)) err-already-auditor)
+    (asserts! (< (var-get auditor-count) max-auditors) err-max-auditors-reached)
+    (map-set auditors new-auditor true)
+    (var-set auditor-count (+ (var-get auditor-count) u1))
+    (ok true)))
+
+(define-public (remove-auditor (auditor principal))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-not-authorized)
+    (asserts! (is-some (map-get? auditors auditor)) err-already-auditor)
+    (map-delete auditors auditor)
+    (var-set auditor-count (- (var-get auditor-count) u1))
+    (ok true)))
+
+(define-read-only (get-auditor-count)
+  (ok (var-get auditor-count)))
+
+(define-read-only (is-auditor (address principal))
+  (default-to false (map-get? auditors address)))
