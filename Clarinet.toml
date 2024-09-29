@@ -1,0 +1,19 @@
+[project]
+name = 'audits-reputation-system'
+description = ''
+authors = "fuad salami"
+telemetry = true
+cache_dir = './.cache'
+requirements = []
+[contracts.audits-reputation-system]
+path = 'contracts/audits-reputation-system.clar'
+clarity_version = 2
+epoch = 2.5
+[repl.analysis]
+passes = ['check_checker']
+
+[repl.analysis.check_checker]
+strict = false
+trusted_sender = false
+trusted_caller = false
+callee_filter = false
