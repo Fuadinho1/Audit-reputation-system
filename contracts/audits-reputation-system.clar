@@ -56,11 +56,6 @@
   )
 )
 
-
-(define-private (calculate-quality-score (completeness uint) (accuracy uint) (timeliness uint))
-    (/ (+ completeness (* accuracy u2) timeliness) u4))
-
-
 ;; Public functions
 
 (define-public (transfer (amount uint) (sender principal) (recipient principal) (memo (optional (buff 34))))
@@ -86,6 +81,59 @@
     (print {event: "auditor_verified", auditor: new-auditor})
     (ok true)))
 
+(define-public (burn (amount uint) (owner principal))
+  (begin
+    (asserts! (is-eq tx-sender owner) err-not-authorized)
+    (asserts! (> amount u0) err-zero-amount)
+    (asserts! (<= amount (ft-get-balance reputation-token owner)) err-insufficient-balance)
+    (ft-burn? reputation-token amount owner)))
+
+(define-public (remove-auditor (auditor principal))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-not-authorized)
+    (asserts! (is-some (map-get? auditors auditor)) err-already-auditor)
+    (map-delete auditors auditor)
+    (var-set auditor-count (- (var-get auditor-count) u1))
+    (ok true)))
+
+(define-public (audit-auditor (auditor principal))
+  (begin
+    (asserts! (is-auditor auditor) err-not-authorized)
+    (print {event: "auditor-audited", auditor: auditor})
+    (ok true)))
+
+(define-public (decay-reputation)
+  (let
+    (
+      (current-block block-height)
+      (last-decay (var-get last-decay-block))
+    )
+    (if (>= (- current-block last-decay) decay-period)
+      (begin
+        (var-set last-decay-block current-block)
+        (ok true))
+      (err u109)) ;; Error: Not enough time has passed for decay
+  )
+)
+
+(define-private (calculate-quality-score (completeness uint) (accuracy uint) (timeliness uint))
+    (/ (+ completeness (* accuracy u2) timeliness) u4))
+
+
+(define-read-only (get-decayed-balance (user principal))
+  (let ((last-update (default-to u0 (map-get? reputation-timestamps user))))
+    (ok (apply-decay (ft-get-balance reputation-token user) last-update))))
+
+
+(define-read-only (is-whitelisted (user principal))
+  (default-to false (map-get? whitelist user)))
+
+(define-read-only (is-auditor (address principal))
+  (default-to false (map-get? auditors address)))
+
+(define-read-only (get-name)
+  (ok (var-get token-name)))
+
 (define-read-only (get-symbol)
   (ok (var-get token-symbol)))
 
@@ -100,3 +148,20 @@
 
 (define-read-only (get-token-uri)
   (ok (var-get token-uri)))
+
+(define-read-only (get-role (user principal))
+  (default-to "user" (map-get? roles user)))
+
+(define-read-only (check-max-supply)
+  (let ((current-supply (ft-get-supply reputation-token)))
+    (if (> current-supply max-token-supply)
+      (err u107) ;; Error: Maximum token supply exceeded
+      (ok true))))
+
+(define-read-only (get-auditor-count)
+  (ok (var-get auditor-count)))
+
+(define-public (get-contract-owner)
+  (ok contract-owner))
+
+
