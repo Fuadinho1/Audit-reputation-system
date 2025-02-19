@@ -164,4 +164,122 @@
 (define-public (get-contract-owner)
   (ok contract-owner))
 
+;; Additional constants
+(define-constant err-invalid-score (err u110))
+(define-constant err-invalid-audit-data (err u111))
+(define-constant err-audit-not-found (err u112))
+(define-constant min-audit-score u0)
+(define-constant max-audit-score u100)
 
+;; Additional data maps
+(define-map audit-records
+    { audit-id: uint, auditor: principal }
+    { score: uint, timestamp: uint, status: (string-ascii 20) })
+(define-map auditor-stats principal 
+    { total-audits: uint, 
+      average-score: uint,
+      reputation-multiplier: uint })
+(define-map staking-positions
+    principal
+    { amount: uint, locked-until: uint })
+
+;; Staking functionality
+(define-public (stake-tokens (amount uint) (lock-period uint))
+    (let
+        ((sender tx-sender)
+         (current-time stacks-block-height)
+         (unlock-time (+ current-time lock-period)))
+        (begin
+            (asserts! (> amount u0) err-zero-amount)
+            (asserts! (<= amount (ft-get-balance reputation-token sender)) err-insufficient-balance)
+            (try! (ft-transfer? reputation-token amount sender (as-contract tx-sender)))
+            (map-set staking-positions sender
+                { amount: amount,
+                  locked-until: unlock-time })
+            (print {event: "tokens_staked", staker: sender, amount: amount, unlock-time: unlock-time})
+            (ok true))))
+
+(define-public (unstake-tokens)
+    (let
+        ((sender tx-sender)
+         (position (unwrap! (map-get? staking-positions sender) err-not-authorized))
+         (current-time stacks-block-height))
+        (begin
+            (asserts! (>= current-time (get locked-until position)) err-not-authorized)
+            (try! (as-contract (ft-transfer? reputation-token
+                                           (get amount position)
+                                           (as-contract tx-sender)
+                                           sender)))
+            (map-delete staking-positions sender)
+            (print {event: "tokens_unstaked", staker: sender, amount: (get amount position)})
+            (ok true))))
+
+;; Enhanced audit management
+(define-public (submit-audit-report 
+    (audit-id uint)
+    (completeness uint)
+    (accuracy uint)
+    (timeliness uint)
+    (audit-data (string-utf8 500)))
+    (let
+        ((sender tx-sender)
+         (quality-score (calculate-quality-score completeness accuracy timeliness)))
+        (begin
+            (asserts! (is-auditor sender) err-not-authorized)
+            (asserts! (and (>= quality-score min-audit-score) 
+                          (<= quality-score max-audit-score)) 
+                     err-invalid-score)
+            (map-set audit-records
+                { audit-id: audit-id, auditor: sender }
+                { score: quality-score,
+                  timestamp: stacks-block-height,
+                  status: "completed" })
+            (update-auditor-stats sender quality-score)
+            (print {event: "audit_submitted",
+                   auditor: sender,
+                   audit-id: audit-id,
+                   score: quality-score})
+            (ok true))))
+
+(define-private (update-auditor-stats (auditor principal) (new-score uint))
+    (let
+        ((current-stats (default-to
+            { total-audits: u0,
+              average-score: u0,
+              reputation-multiplier: u100 }
+            (map-get? auditor-stats auditor)))
+         (new-total (+ (get total-audits current-stats) u1))
+         (new-average (/ (+ (* (get average-score current-stats)
+                              (get total-audits current-stats))
+                           new-score)
+                        new-total)))
+        (map-set auditor-stats
+            auditor
+            { total-audits: new-total,
+              average-score: new-average,
+              reputation-multiplier: (calculate-reputation-multiplier new-average) })))
+
+(define-private (calculate-reputation-multiplier (average-score uint))
+    (if (>= average-score u90)
+        u150  ;; 1.5x multiplier for excellent performance
+        (if (>= average-score u80)
+            u125  ;; 1.25x multiplier for good performance
+            u100))) ;; 1x multiplier for standard performance
+
+;; Read-only functions for querying data
+(define-read-only (get-audit-record (audit-id uint) (auditor principal))
+    (map-get? audit-records { audit-id: audit-id, auditor: auditor }))
+
+(define-read-only (get-auditor-statistics (auditor principal))
+    (map-get? auditor-stats auditor))
+
+(define-read-only (get-staking-position (staker principal))
+    (map-get? staking-positions staker))
+
+(define-read-only (calculate-stake-rewards (staker principal))
+    (let
+        ((position (unwrap! (map-get? staking-positions staker) (ok u0)))
+         (locked-time (- stacks-block-height (get locked-until position)))
+         (base-reward-rate u5)) ;; 5% base annual reward rate
+        (ok (/ (* (get amount position) base-reward-rate locked-time)
+               (* u100 decay-period)))))
